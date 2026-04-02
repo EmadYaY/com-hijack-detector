@@ -391,6 +391,7 @@ Key Sysmon Event IDs for COM Hijacking detection:
 - [Abusing the COM Registry Structure — bohops](https://bohops.com/2018/08/18/abusing-the-com-registry-structure-part-2-loading-techniques-for-evasion-and-persistence/)
 - [Revisiting COM Hijacking — SpecterOps](https://specterops.io/blog/2025/05/28/revisiting-com-hijacking/)
 - [Atomic Red Team — T1546.015](https://github.com/redcanaryco/atomic-red-team/blob/master/atomics/T1546.015/T1546.015.md)
+- [Turla: In and out of its unique Outlook backdoor - PDF](https://web-assets.esetstatic.com/wls/en/papers/white-papers/Eset-Turla-Outlook-Backdoor.pdf)
 
 ---
 
