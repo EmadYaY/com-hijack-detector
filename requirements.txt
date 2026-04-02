@@ -1,0 +1,10 @@
+# COM Hijack Detector — Python Requirements
+# ==========================================
+# Install with: pip install -r requirements.txt
+#
+# Core dependency (terminal output formatting)
+rich>=13.7.0
+
+# No additional dependencies required.
+# winreg is part of Python's standard library on Windows (live mode only).
+# All other modules used (json, csv, argparse, pathlib, etc.) are stdlib.
