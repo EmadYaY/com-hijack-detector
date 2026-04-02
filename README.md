@@ -45,12 +45,12 @@ This tool detects that discrepancy.
                                ▼
                   ┌────────────────────────────┐
                   │  5. Compare DLL paths      │
-                  │  HKCU_DLL ≠ HKLM_DLL ?    │
+                  │  HKCU_DLL ≠ HKLM_DLL ?     │
                   └────────────┬───────────────┘
                                │
                ┌───────────────┴─────────────────┐
                │                                 │
-            YES │                              NO │
+           YES │                              NO │
                ▼                                 ▼
    ┌───────────────────────┐         ┌────────────────────┐
    │  6. Flag as           │         │  Skip / No action  │
