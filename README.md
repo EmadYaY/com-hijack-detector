@@ -6,6 +6,19 @@ A forensic tool for detecting COM Object Hijacking on Windows systems by compari
 
 ---
 
+## Changelog
+
+### v1.0.1
+- **FIX** — Phantom COM detection: HKCU-only CLSIDs with no InprocServer32 DLL are now flagged as `LOW` risk instead of silently skipped
+- **FIX** — Suspicious path logic was inverted: `AppData`, `ProgramData`, `Temp`, `Users` paths are now correctly treated as **suspicious**, not benign
+- **FEATURE** — `SUSPICIOUS_PATHS` detection: DLL paths in user-writable locations elevate risk and set the `[P]` flag in output
+- **FEATURE** — CLSID Whitelist: known-legitimate CLSIDs (Office, OneDrive, Chrome, etc.) are skipped to reduce false positives
+- **FEATURE** — Task Correlation (`--correlate-tasks` / `-CorrelateTasks`): scans `C:\Windows\System32\Tasks` for ComHandler tasks referencing HKCU CLSIDs; LogonTrigger tasks are specially annotated as high-value targets
+- **FEATURE** — `--no-low` / `-NoLow` flag to suppress LOW risk (Phantom COM) findings
+- **FEATURE** — `suspicious_path` and `task_correlated` columns added to CSV/JSON output
+- **FEATURE** — Findings sorted by risk tier (HIGH → MEDIUM → LOW), task-correlated findings first within each tier
+
+
 ## How It Works
 
 When Windows resolves a COM object, it checks `HKCU` **before** `HKLM`. An attacker can register a malicious DLL under `HKCU` using the same CLSID as a legitimate system COM object — causing their DLL to be loaded instead, without touching any protected system paths or requiring elevated privileges.
@@ -22,8 +35,8 @@ This tool detects that discrepancy.
    │   HKLM:\...\CLSID        │      │   HKCU:\...\CLSID        │
    │   (Local Machine)        │      │   (Current User)         │
    └────────────┬─────────────┘      └─────────────┬────────────┘
-                │                                   │
-                └──────────────┬────────────────────┘
+                │                                  │
+                └──────────────┬───────────────────┘
                                │
                                ▼
                   ┌────────────────────────┐
@@ -45,12 +58,12 @@ This tool detects that discrepancy.
                                ▼
                   ┌────────────────────────────┐
                   │  5. Compare DLL paths      │
-                  │  HKCU_DLL ≠ HKLM_DLL ?    │
+                  │  HKCU_DLL ≠ HKLM_DLL ?     │
                   └────────────┬───────────────┘
                                │
                ┌───────────────┴─────────────────┐
                │                                 │
-            YES │                              NO │
+           YES │                              NO │
                ▼                                 ▼
    ┌───────────────────────┐         ┌────────────────────┐
    │  6. Flag as           │         │  Skip / No action  │
@@ -173,7 +186,7 @@ Options:
 
 ```
 ╔══════════════════════════════════════════════════════╗
-║         COM Hijack Detector  v1.0.0                  ║
+║         COM Hijack Detector  v1.0.1                  ║
 ║         MITRE ATT&CK: T1546.015                      ║
 ╚══════════════════════════════════════════════════════╝
 
@@ -380,6 +393,117 @@ Key Sysmon Event IDs for COM Hijacking detection:
 
 ---
 
+## Limitations
+
+Understanding what this tool **cannot** detect is as important as what it can.
+
+---
+
+### 1. Only sees CLSIDs that exist in HKCU at scan time
+
+The tool compares whatever is registered in HKCU vs HKLM at the moment the scan runs. It has no visibility into:
+
+- **Removed-after-execution hijacks:** An attacker loads their DLL once, then deletes the HKCU key. The DLL ran, persistence might already be established, but the registry is now clean.
+- **Timing attacks:** The HKCU key is written immediately before the COM object is invoked, then deleted right after. A scan between those two events would catch it; any other scan would miss it entirely.
+- **Fileless COM hijacks:** Some advanced techniques manipulate COM resolution in-memory without writing a permanent registry key.
+
+> **Mitigation:** Use a SIEM with Sysmon Event ID 12/13 (registry write) for live detection. A registry snapshot at a single point in time is not enough for adversaries who clean up.
+
+---
+
+### 2. Phantom COM detection is heuristic, not conclusive
+
+A CLSID key in HKCU with no DLL path (`LOW` / `STATUS_PHANTOM`) can mean:
+
+- An attacker created the key but hasn't yet dropped the DLL
+- An attacker cleaned up after a successful hijack
+- A legitimate application created a stub key for its own COM registration purposes
+
+The tool flags it, but it cannot determine which scenario it is. Manual investigation is always required.
+
+---
+
+### 3. No Task context visibility
+
+The `--correlate-tasks` flag tells you **which CLSIDs are referenced by ComHandler tasks** and **whether a LogonTrigger is present**, but it does not tell you:
+
+| Question | Visible? |
+|---|---|
+| Is the Task enabled? | No |
+| Has the Task ever executed? | No |
+| Is the trigger `LogonTrigger`, `TimeTrigger`, or `EventTrigger`? | LogonTrigger only |
+| What user account runs the task? | No |
+| Does the CLSID have the three required properties (COM server, LogonTrigger, valid InprocServer32)? | Partial |
+
+For full Task analysis, manually inspect the XML files in `C:\Windows\System32\Tasks` or use `schtasks /query /fo LIST /v`.
+
+---
+
+### 4. No execution correlation (DLL load verification)
+
+The tool tells you that a suspicious HKCU DLL **could** be loaded — it does not confirm that it **was** loaded. To verify actual execution:
+
+- **Sysmon Event ID 7** (Image Load): confirms the DLL was loaded into a process
+- **Sysmon Event ID 1** (Process Create): shows what process invoked the COM object
+- **Procmon**: real-time registry and DLL load tracing
+
+The `[T]` flag in the output marks CLSIDs referenced by tasks, which increases the probability of execution — but it is not confirmation.
+
+---
+
+### 5. LocalServer32 and other COM server types are not covered
+
+The tool focuses exclusively on `InprocServer32` (DLL-based in-process COM servers). It does **not** scan:
+
+| Registry Key | Type | Covered? |
+|---|---|---|
+| `InprocServer32` | In-process DLL server | Yes |
+| `LocalServer32` | Out-of-process EXE server | No |
+| `TreatAs` | CLSID redirection | No |
+| `ScriptletURL` | Scriptlet-based COM | No |
+| `DelegateExecute` | Elevation via COM | No |
+| `TypeLib` | Type library hijacking (CICADA8 technique) | No |
+
+`LocalServer32` hijacking via EXEs and `TreatAs` redirection are valid attack paths that are not detected by this tool.
+
+---
+
+### 6. Whitelist is environment-specific
+
+The built-in `CLSID_WHITELIST` in the code contains common Microsoft and third-party CLSIDs that frequently appear in HKCU for legitimate reasons. However:
+
+- The whitelist is **not exhaustive** — a CLSID not in the list may still be legitimate in your environment
+- Enterprise environments with custom software will generate significant noise until the whitelist is tuned
+- An attacker who knows your whitelist can choose a CLSID that matches a whitelisted entry
+
+> **Recommendation:** Run the tool once, review all MEDIUM findings, add legitimate CLSIDs from your environment to the whitelist at the top of `com_hijack_detector.py`.
+
+---
+
+### 7. HKLM scan requires elevated access for some keys
+
+In live mode on Windows, some HKLM CLSID subkeys may return `PermissionError` even for a standard user. The tool silently skips inaccessible keys. This means:
+
+- The HKLM map may be **incomplete** on restricted accounts
+- A CLSID might appear as "HKCU-only" (MEDIUM) when the HKLM counterpart exists but was inaccessible
+- Run with administrator privileges for a complete scan
+
+---
+
+### Summary Table
+
+| Limitation | Impact | Workaround |
+|---|---|---|
+| Point-in-time snapshot | Misses cleanup-after-exec hijacks | Sysmon Event ID 12/13 in SIEM |
+| No DLL load confirmation | Cannot verify actual execution | Sysmon Event ID 7 + Procmon |
+| No Task execution context | Task correlation is structural only | Manual `schtasks /query` |
+| InprocServer32 only | Misses LocalServer32, TreatAs, TypeLib | Extend the scanner manually |
+| Whitelist is incomplete | False positives in custom environments | Tune CLSID_WHITELIST per environment |
+| Requires elevated access for full HKLM | Incomplete HKLM map on restricted accounts | Run as Administrator |
+| Phantom COM is heuristic | LOW findings require manual triage | Correlate with Sysmon history |
+
+---
+
 ## References
 
 - [MITRE ATT&CK T1546.015](https://attack.mitre.org/techniques/T1546/015/)
@@ -391,6 +515,7 @@ Key Sysmon Event IDs for COM Hijacking detection:
 - [Abusing the COM Registry Structure — bohops](https://bohops.com/2018/08/18/abusing-the-com-registry-structure-part-2-loading-techniques-for-evasion-and-persistence/)
 - [Revisiting COM Hijacking — SpecterOps](https://specterops.io/blog/2025/05/28/revisiting-com-hijacking/)
 - [Atomic Red Team — T1546.015](https://github.com/redcanaryco/atomic-red-team/blob/master/atomics/T1546.015/T1546.015.md)
+- [Turla: In and out of its unique Outlook backdoor - PDF](https://web-assets.esetstatic.com/wls/en/papers/white-papers/Eset-Turla-Outlook-Backdoor.pdf)
 
 ---
 
